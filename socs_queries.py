@@ -69,33 +69,46 @@ all_sick_by_sex_by_age_state["simulator_count_variables"]['location_admin1'] = "
 """
 
 
-def add_age_range_column(scos, df):
+def filter_age_ranges(scos, df):
 
-    def filter_out_unrequested_age_ranges(df, age_range):
-    #build the query
-    #remove everything below minnist min, and above maxxest max
-        query = "(integer_age >= "+age_range[0] +") & (integer_age <= 25)"
+    def filter_age_ranges(df, min, max):
+        # remove rows with age below min or above max
+        query = "(integer_age >= " + str(min) + ") & (integer_age <= " + str(max) + ")"
         df = df.query(query)
         return df
 
-
-    def make_age_range_row(row):
-        return pd.cut([row['integer_age']], bins=bins, labels=bin_labels)[0]
-
-    df = filter_out_unrequested_age_ranges(df)
-    #nick create the bins given all_sick_by_sex_by_age_range["simulator_count_variables"]['age_range']
-    #here is some help:
     age_ranges = scos["simulator_count_variables"]['age_range']
+
+
+    # get min and max from all ranges
+    min = 200
+    max = 0
+    for age_range in age_ranges:
+        if age_ranges[age_range][0] < min:
+            min = age_ranges[age_range][0]
+
+        if age_ranges[age_range][1] > max:
+            max = age_ranges[age_range][1]
+
+
+    # filter out all ages outside min and max
+    df = filter_age_ranges(df, min, max)
+
+    count = 0
     for age_range in age_ranges:
         print (age_range + " bin is " + str(age_ranges[age_range][0]) + " to " + str(age_ranges[age_range][1]))
+        # get copy of dataframe to filter
+        dfcopy = df.copy()
+        dfcopy = filter_age_ranges(dfcopy, age_ranges[age_range][0], age_ranges[age_range][1])
+        # add the age range column to the data frame
+        dfcopy['age_range'] = age_range
+        if count == 0:
+            newdf = dfcopy
+        else:
+            newdf = pd.concat([newdf, dfcopy], axis=0)
+        count = count + 1
 
-    #result of nicks awesome code is bins and labels
-    bins = [0,2,65,100]
-    bin_labels = ['infant', 'unwanted_1', 'retirement']
-
-    df['age_range'] = df.apply(make_age_range_row, axis=1)
-
-    return df
+    return newdf
 
 """
 This function creates queries in the form of: 'b == ["a", "b", "c"]'
@@ -124,6 +137,12 @@ def filter_df(df, scos):
     return df
 
 
+def process_output_options(df, socs):
+    output_axes = scos["output_options"]['axes']
+    df = df.groupby(list(output_axes))['count'].aggregate(sum)
+    df = df.to_frame("count")
+    df = df.reset_index()
+    return df
 
 
 if __name__ == '__main__':
@@ -136,7 +155,9 @@ if __name__ == '__main__':
     #Filter out rows from the dataframe that we don't want
     df = filter_df(line_listing, scos)
 
-    df = add_age_range_column(scos, df)
+    df = filter_age_ranges(scos, df)
+
+    df = process_output_options(df, scos)
 
     #TODO: Add aggregation options next, once data is filtered
     print (df)
