@@ -1,4 +1,6 @@
+import xml.etree.ElementTree as ET
 import pandas as pd
+from parse_example_scos_message import get_queries_from_scos
 
 """
 Author: John Levander
@@ -68,38 +70,68 @@ all_sick_by_sex_by_age_state["simulator_count_variables"]['integer_age'] = "all"
 all_sick_by_sex_by_age_state["simulator_count_variables"]['location_admin1'] = "all"
 """
 
+m_inf = -float('inf')
+p_inf = float('inf')
 
-def filter_age_ranges(scos, df):
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
 
-    def filter_age_ranges(df, min, max):
+def filter_ranges(scos, df):
+
+    column_name = ''
+    if 'age_range' in scos["simulator_count_variables"]:
+        variable = 'age_range'
+        column_name = 'integer_age'
+    elif 'household_median_income' in scos["simulator_count_variables"]:
+        variable = 'household_median_income'
+        column_name = 'household_median_income'
+    else:
+        return df;
+
+    def filter_ranges_min_max(df, min, max):
+
+        if min == float('-inf') and max == float('inf'):
+            # no filtering required
+            return df
+
+        if min == float('-inf'):
+            query = "(" + column_name + " <= " + str(max) + ")"
+        elif max == float('inf'):
+            query = "(" + column_name + " >= " + str(min) + ")"
+        else:
+            query = "(" + column_name + " >= " + str(min) + ") & (" + column_name + " <= " + str(max) + ")"
+
         # remove rows with age below min or above max
-        query = "(integer_age >= " + str(min) + ") & (integer_age <= " + str(max) + ")"
         df = df.query(query)
         return df
 
-    age_ranges = scos["simulator_count_variables"]['age_range']
+    ranges = scos["simulator_count_variables"][variable]
 
 
     # get min and max from all ranges
-    min = 200
-    max = 0
-    for age_range in age_ranges:
-        if age_ranges[age_range][0] < min:
-            min = age_ranges[age_range][0]
+    min = float("inf")
+    max = -float("inf")
+    for age_range in ranges:
+        if ranges[age_range]['range'][0] < min:
+            min = ranges[age_range]['range'][0]
 
-        if age_ranges[age_range][1] > max:
-            max = age_ranges[age_range][1]
+        if ranges[age_range]['range'][1] > max:
+            max = ranges[age_range]['range'][1]
 
 
     # filter out all ages outside min and max
-    df = filter_age_ranges(df, min, max)
+    df = filter_ranges_min_max(df, min, max)
 
     count = 0
-    for age_range in age_ranges:
-        print (age_range + " bin is " + str(age_ranges[age_range][0]) + " to " + str(age_ranges[age_range][1]))
+    for age_range in ranges:
+        print (age_range + " bin is " + str(ranges[age_range]['range'][0]) + " to " + str(ranges[age_range]['range'][1]))
         # get copy of dataframe to filter
         dfcopy = df.copy()
-        dfcopy = filter_age_ranges(dfcopy, age_ranges[age_range][0], age_ranges[age_range][1])
+        dfcopy = filter_ranges_min_max(dfcopy, ranges[age_range]['range'][0], ranges[age_range]['range'][1])
         # add the age range column to the data frame
         dfcopy['age_range'] = age_range
         if count == 0:
@@ -117,7 +149,11 @@ The query selects all rows in the dataframe where column b is equal to the value
 def create_category_query(df, col_name, vals_to_keep):
     query = df.columns[df.columns.get_loc(col_name)] + ' == ['
     for val in vals_to_keep:
-        query += "'" + val + "',"
+        # see if val is an integer
+        if is_number(val):
+            query += val + ","
+        else:
+            query += "'" + val + "',"
     query = query[:-1]
     query += "]"
     return query
@@ -131,7 +167,7 @@ would filter the FEMALES out in this function.
 def filter_df(df, scos):
     #TODO: deal with age_range categories and integer categories
     for simulator_count_variable in scos["simulator_count_variables"]:
-        if simulator_count_variable != "age_range":
+        if simulator_count_variable != "age_range" and simulator_count_variable != "household_median_income":
             query = create_category_query(df, simulator_count_variable, scos['simulator_count_variables'][simulator_count_variable])
             df = df.query(query)
     return df
@@ -146,18 +182,28 @@ def process_output_options(df, socs):
 
 
 if __name__ == '__main__':
-    scos = all_sick_by_sex_by_age_range
+
+    tree = ET.parse('/Users/nem41/Documents/code_projects/apollo_projects/example-scos-messages/new_E_total_vacc_by_household_income.xml')
+    root = tree.getroot()
+    queries = get_queries_from_scos(root)
+
+    #scos = all_sick_by_sex_by_age_range
+
+    scos = queries[0]
 
     #load the simulator output into a dataframe
-    line_listing = pd.read_csv('http://research.rods.pitt.edu/line_listing.csv')
+    line_listing = pd.read_csv('http://research.rods.pitt.edu/line_listing_new.csv')
 
+    # line_listing['species'] = line_listing['species'].astype(str)
 
     #Filter out rows from the dataframe that we don't want
     df = filter_df(line_listing, scos)
 
-    df = filter_age_ranges(scos, df)
+    df = filter_ranges(scos, df)
 
     df = process_output_options(df, scos)
+
+    df.to_csv('/Users/nem41/Documents/apollo/python_output_test.csv', sep=',', index=False)
 
     #TODO: Add aggregation options next, once data is filtered
     print (df)
